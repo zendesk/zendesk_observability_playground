@@ -1,0 +1,7 @@
+*.crt
+*.key
+*.ipr
+*.iws
+*.idea/
+target/
+.DS_Store

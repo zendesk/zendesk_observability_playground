@@ -1,0 +1,98 @@
+admin:
+  access_log_path: /tmp/admin_access.log
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 3001
+
+stats_config:
+  stats_tags:
+  - tag_name: "project"
+    fixed_value: "sre-test"
+  use_all_default_tags: true
+
+tracing:
+  http:
+    name: envoy.tracers.datadog
+    config:
+      collector_cluster: datadog_cluster
+      service_name: envoy
+
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 3000
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        config:
+          access_log:
+          - name: envoy.file_access_log
+            config:
+              path: "/dev/stdout"
+          tracing:
+            operation_name: egress
+            request_headers_for_tags: [":path", ":method"]
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          route_config:
+            name: default_route
+            virtual_hosts:
+            - name: all_hosts
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: /sinatra
+                route:
+                  cluster: sinatra-service
+              - match:
+                  prefix: /go
+                route:
+                  cluster: go-service
+              - match:
+                  prefix: /scala-akka
+                route:
+                  cluster: scala-akka-service
+          http_filters:
+          - name: envoy.router
+
+
+  clusters:
+  - name: datadog_cluster
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    hosts:
+    - socket_address:
+        address: dd-agent
+        port_value: 8126
+
+  - name: "go-service"
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    hosts:
+    - socket_address:
+        address: go-service
+        port_value: 9001
+
+  - name: "sinatra-service"
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    hosts:
+    - socket_address:
+        address: sinatra-service
+        port_value: 5000
+
+  - name: "scala-akka-service"
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    hosts:
+    - socket_address:
+        address: scala-akka-service
+        port_value: 8090

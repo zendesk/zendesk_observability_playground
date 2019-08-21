@@ -10,6 +10,8 @@ services:
       trivial_example:
         aliases:
           - nginx
+    labels:
+      com.datadoghq.ad.logs: '[{"source": "nginx", "service": "nginx-proxy"}]'
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
       - ./nginx/datadog-config.json:/etc/datadog-config.json
@@ -26,6 +28,8 @@ services:
       trivial_example:
         aliases:
           - go-service
+    labels:
+      com.datadoghq.ad.logs: '[{"source": "go-service", "service": "go-service"}]'
     expose:
       - "9001"
     ports:
@@ -35,7 +39,7 @@ services:
       - DD_TRACE_AGENT_PORT=8126
       - DD_TRACE_ANALYTICS_ENABLED=true
 
-  scala-akka-service:
+  scala-akka:
     depends_on:
       - dd-agent
     build:
@@ -43,7 +47,9 @@ services:
     networks:
       trivial_example:
         aliases:
-          - scala-akka-service
+          - scala-akka
+    labels:
+      com.datadoghq.ad.logs: '[{"source": "scala-akka", "service": "scala-akka"}]'
     expose:
       - "8090"
       - "8091"
@@ -56,6 +62,7 @@ services:
       - DD_AGENT_HOST=dd-agent
       - DD_TRACE_AGENT_PORT=8126
       - DD_TRACE_ANALYTICS_ENABLED=true
+      - DD_LOGS_INJECTION=true
 
   sinatra-service:
     image: "ruby:2.5.3"
@@ -71,6 +78,8 @@ services:
       trivial_example:
         aliases:
           - sinatra-service
+    labels:
+      com.datadoghq.ad.logs: '[{"source": "ruby-sinatra", "service": "ruby-sinatra"}]'
     volumes:
       - ./sinatra-service:/workdir
     working_dir: /workdir
@@ -78,10 +87,6 @@ services:
 
   envoy:
     image: envoyproxy/envoy:latest
-    depends_on:
-      - sinatra-service
-      - go-service
-      - scala-akka-service
     expose:
       - "3000"
       - "3001"
@@ -94,6 +99,8 @@ services:
       trivial_example:
         aliases:
           - envoy
+    labels:
+      com.datadoghq.ad.logs: '[{"source": "envoy", "service": "envoy-proxy"}]'
     command: bash -c "envoy --config-path /etc/envoy/envoy.yaml"
 
   dd-agent:
@@ -106,10 +113,10 @@ services:
       - 'DD_API_KEY=${DD_API_KEY}'
       - 'DD_APM_ENABLED=true'
       - 'DD_APM_NON_LOCAL_TRAFFIC=true'
+      - 'DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true'
       - 'DD_LOGS_ENABLED=true'
       - 'DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true'
-      - 'DD_AC_EXCLUDE="name:datadog-agent"'
-      - 'DD_LOG_LEVEL=WARN'
+      - 'DD_LOG_LEVEL=ERROR'
     networks:
       trivial_example:
         aliases:

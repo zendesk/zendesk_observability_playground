@@ -55,7 +55,7 @@ static_resources:
               - match:
                   prefix: /scala-akka
                 route:
-                  cluster: scala-akka-service
+                  cluster: scala-akka
           http_filters:
           - name: envoy.router
 
@@ -88,11 +88,11 @@ static_resources:
         address: sinatra-service
         port_value: 5000
 
-  - name: "scala-akka-service"
+  - name: "scala-akka"
     connect_timeout: 1s
     type: STRICT_DNS
     lb_policy: ROUND_ROBIN
     hosts:
     - socket_address:
-        address: scala-akka-service
+        address: scala-akka
         port_value: 8090

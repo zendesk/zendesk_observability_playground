@@ -62,6 +62,7 @@ services:
       - DD_AGENT_HOST=dd-agent
       - DD_TRACE_AGENT_PORT=8126
       - DD_TRACE_ANALYTICS_ENABLED=true
+      - DD_LOGS_INJECTION=true
 
   sinatra-service:
     image: "ruby:2.5.3"

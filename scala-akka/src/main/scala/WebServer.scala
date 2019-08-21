@@ -4,7 +4,7 @@ import akka.http.scaladsl.Http
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import akka.http.scaladsl.server.Directives._
-import akka.http.scaladsl.server.directives.{DebuggingDirectives, LogEntry, LoggingMagnet}
+import akka.http.scaladsl.server.directives.{DebuggingDirectives, LogEntry}
 import akka.http.scaladsl.server.RouteResult
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Sink, Source}

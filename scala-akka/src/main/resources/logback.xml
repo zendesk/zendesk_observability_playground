@@ -12,10 +12,6 @@
           "version": "%X{version}",
           "message": "%message",
           "thread": "%thread",
-          "dd": {
-          "trace_id": "%X{dd.trace_id}",
-          "span_id": "%X{dd.span_id}"
-          },
           "logger": "%logger{300}"
           }
         </pattern>

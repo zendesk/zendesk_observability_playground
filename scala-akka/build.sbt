@@ -11,8 +11,6 @@ lazy val distProject = project
       // For json logging. https://docs.datadoghq.com/logs/log_collection/java/?tab=slf4j#raw-format
       "net.logstash.logback" % "logstash-logback-encoder" % "5.0",
       "ch.qos.logback" % "logback-classic" % "1.2.3",
-      // For access to the trace context for logging
-      "com.datadoghq" % "dd-trace-api" % "0.31.2",
     ),
     scalaVersion := "2.13.0",
     version := "0.1",

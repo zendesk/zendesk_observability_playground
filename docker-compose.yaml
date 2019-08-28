@@ -22,8 +22,7 @@ services:
 
   go-service:
     build:
-      context: .
-      dockerfile: ./Dockerfile
+      context: ./go/
     networks:
       trivial_example:
         aliases:
@@ -35,6 +34,7 @@ services:
     ports:
       - "9001:9001"
     environment:
+      - APPNAME=go-service
       - DD_AGENT_HOST=dd-agent
       - DD_TRACE_AGENT_PORT=8126
       - DD_TRACE_ANALYTICS_ENABLED=true

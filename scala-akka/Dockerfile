@@ -11,7 +11,6 @@ FROM openjdk:11-jre-slim
 WORKDIR /app
 COPY --from=0 /build/target/docker/stage/opt/docker/bin ./bin
 COPY --from=0 /build/target/docker/stage/opt/docker/lib ./lib
-
 CMD ["/app/bin/scala-akka", "-jvm-debug", "*:8091", "-v", \
   "-Ddd.service.name=scala-akka", \
   "Ddatadog.slf4j.simpleLogger.defaultLogLevel=debug"]

@@ -10,6 +10,7 @@ import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Sink, Source}
 import spray.json.DefaultJsonProtocol._
 import spray.json.RootJsonFormat
+import ZendeskTracing.optionalTraceContext
 
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.language.postfixOps
@@ -33,13 +34,25 @@ object WebServer {
 
     case class PingResponse(message: String)
     implicit val pingFormat: RootJsonFormat[PingResponse] = jsonFormat1(PingResponse)
-    val route = path("scala-akka" / "ping") { debugLogger {get { complete(PingResponse("pong")) } } }
+
+    // Extract the trace context in the route to be passed to other methods
+    // such as JDBC calls or other HTTP calls
+    val route = debugLogger { optionalTraceContext { traceContext =>
+      path("scala-akka" / "ping") {
+        get {
+          complete(PingResponse("pong"))
+        }
+      }
+    }}
 
     // This is a convenient way to wrap all requests/responses with tracing. Unfortunately
     // it does nothing to propagate the trace context to upstream services (database calls, additional http services, etc)
     def requestHandler(req: HttpRequest): Future[HttpResponse] = {
       val startedSpan = ZendeskTracing.extractTraceInfo(req)
-      val responseFuture = Source.single(req).via(route).runWith(Sink.head)
+      val responseFuture = Source.single(req)
+        .via(ZendeskTracing.internalTraceFlow) // Add the internal trace header
+        .via(route)
+        .runWith(Sink.head)
       responseFuture.onComplete {
         case Success(response) =>
           startedSpan.foreach { ss =>

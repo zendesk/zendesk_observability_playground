@@ -13,13 +13,13 @@ import spray.json.RootJsonFormat
 
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.language.postfixOps
+import scala.util.{Failure, Success}
 
 object WebServer {
   def main(args: Array[String]) {
 
     implicit val system: ActorSystem = ActorSystem("my-system")
     implicit val materializer: ActorMaterializer = ActorMaterializer()
-    // needed for the future flatMap/onComplete in the end
     implicit val executionContext: ExecutionContextExecutor = system.dispatcher
     val portNumber: Int = 8090
 
@@ -34,8 +34,21 @@ object WebServer {
     case class PingResponse(message: String)
     implicit val pingFormat: RootJsonFormat[PingResponse] = jsonFormat1(PingResponse)
     val route = path("scala-akka" / "ping") { debugLogger {get { complete(PingResponse("pong")) } } }
+
+    // This is a convenient way to wrap all requests/responses with tracing. Unfortunately
+    // it does nothing to propagate the trace context to upstream services (database calls, additional http services, etc)
     def requestHandler(req: HttpRequest): Future[HttpResponse] = {
-        Source.single(req).via(route).runWith(Sink.head)
+      val startedSpan = ZendeskTracing.extractTraceInfo(req)
+      val responseFuture = Source.single(req).via(route).runWith(Sink.head)
+      responseFuture.onComplete {
+        case Success(response) =>
+          startedSpan.foreach { ss =>
+            ZendeskTracing.completeSpan(ss, req, response)}
+        case Failure(ex) =>
+          startedSpan.foreach { ss =>
+            ZendeskTracing.completeFailedSpan(ss, req, ex)}
+      }
+      responseFuture
     }
     // Have to use bindAndHandleAsync for tracing to work.
     // https://github.com/DataDog/dd-trace-java/blob/master/dd-java-agent/instrumentation/akka-http-10.0/src/main/java/datadog/trace/instrumentation/akkahttp/AkkaHttpServerInstrumentation.java#L64-L69

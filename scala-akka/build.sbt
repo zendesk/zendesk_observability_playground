@@ -2,7 +2,6 @@ lazy val distProject = project
   .in(file("."))
   .enablePlugins(JavaAgent, JavaAppPackaging)
   .settings(
-    javaAgents += "com.datadoghq" % "dd-java-agent" % "0.31.2" % "runtime",
     libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-http"   % "10.1.9",
       "com.typesafe.akka" %% "akka-http-spray-json" % "10.1.9",

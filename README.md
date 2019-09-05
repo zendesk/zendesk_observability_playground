@@ -1,4 +1,6 @@
-Welcome to the Zendesk Observability Playground! This repo contains working examples of how to implement various observability patterns across our infrastructre and in our applications. This is not intended to be close to our production infrastructure, but rather provide simple to understand components and make it easy to experiment with them. 
+## Public Zendesk Observability Playground ##
+
+Welcome to the Zendesk Observability Playground! This public repo contains working examples of how to implement various observability patterns across our infrastructre and in our applications. This is not intended to be close to our production infrastructure, but rather provide simple to understand components and make it easy to experiment with them. 
 
 Currently, we have the following routing topology:
 ```

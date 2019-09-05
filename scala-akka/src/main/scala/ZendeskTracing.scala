@@ -3,20 +3,34 @@ import java.time.Instant
 import akka.actor.ActorSystem
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.Http
+import akka.http.scaladsl.model.headers.RawHeader
+import akka.http.scaladsl.server.Directive1
 import akka.stream.Materializer
+import akka.stream.scaladsl.Flow
+import akka.NotUsed
+import akka.http.scaladsl.server.Directives.optionalHeaderValueByName
 import spray.json.{DeserializationException, JsString, JsValue, RootJsonFormat, _}
 
 import scala.concurrent.ExecutionContext
-import scala.util.{Random, Success}
+import scala.util.{Failure, Random, Success}
 
 object ZendeskTracing {
   import SnakifiedSprayJsonSupport._
 
   def epocNanoseconds: BigInt = Instant.now().toEpochMilli * 1000000
 
-  val apmHost: String = System.getenv("DD_AGENT_HOST")
-  val apmPort: String = System.getenv("DD_TRACE_AGENT_PORT")
+  private val apmHost: String = System.getenv("DD_AGENT_HOST")
+  private val apmPort: String = System.getenv("DD_TRACE_AGENT_PORT")
+  private val headerContextName = "internal-trace-context"
 
+
+  sealed trait ServiceType {val stringRepr: String}
+  case object Web extends ServiceType { val stringRepr = "web"}
+  case object Database extends ServiceType { val stringRepr = "db"}
+  case object Cache extends ServiceType { val stringRepr = "cache"}
+  case object Custom extends ServiceType { val stringRepr = "custom"}
+
+  case class TraceContext(traceId: BigInt, spanId: BigInt)
   case class StartedSpan(traceId: BigInt, parentSpanId: BigInt) {
     // Datadog APM expects nanoseconds
     val start: BigInt = ZendeskTracing.epocNanoseconds
@@ -26,11 +40,29 @@ object ZendeskTracing {
     }
   }
 
-  sealed trait ServiceType {val stringRepr: String}
-  case object Web extends ServiceType { val stringRepr = "web"}
-  case object Database extends ServiceType { val stringRepr = "db"}
-  case object Cache extends ServiceType { val stringRepr = "cache"}
-  case object Custom extends ServiceType { val stringRepr = "custom"}
+  def extractInternalTraceContext(req: HttpRequest): Option[TraceContext] = {
+    req.headers.find(_.name() == headerContextName).map{ h =>
+      h.value().split(':').toList match {
+        case tid :: sid :: Nil =>
+          TraceContext(traceId = BigInt(tid), spanId = BigInt(sid))
+        case _ =>
+          throw new RuntimeException(s"Failed to extract trace context from ${h.value()}")
+      }
+    }
+  }
+
+  // An akka-streams flow to add the internal trace context header
+  private def traceContextHeader(req: HttpRequest): HttpRequest = {
+    val traceContext: Option[String] = extractTraceInfo(req)
+      .map{ ss => s"${ss.traceId}:${ss.spanId}"}
+    if (traceContext.isDefined) {
+      req.addHeader(RawHeader(headerContextName, traceContext.get))
+    } else {
+      req
+    }
+  }
+  val internalTraceFlow: Flow[HttpRequest, HttpRequest, NotUsed] =
+    Flow.fromFunction(traceContextHeader)
 
   // Traces use a lot of 64 bit unsigned values, which unfortunately don't work
   // as java Long(s) because Long is signed. :sadpanda:
@@ -42,6 +74,20 @@ object ZendeskTracing {
     metrics: Map[String, Float] = Map.empty) {
   }
 
+  // An akka-http Directive to extract the TraceContext from the internal header
+  def optionalTraceContext: Directive1[Option[TraceContext]] = {
+    optionalHeaderValueByName(headerContextName).map {
+      case Some(s) => s.split(':').toList match {
+        case tid :: sid :: Nil =>
+          Some(TraceContext(traceId = BigInt(tid), spanId = BigInt(sid)))
+        case _ =>
+          None
+      }
+      case None => None
+    }
+  }
+
+  // Extract trace info from the datadog headers on the incoming request
   def extractTraceInfo(r: HttpRequest): Option[StartedSpan] = {
     val traceId: Option[BigInt] = r.headers.find(_.name().toLowerCase == "x-datadog-trace-id")
       .map( h => BigInt(h.value()))
@@ -115,6 +161,7 @@ object ZendeskTracing {
   }
   implicit val spanFormat: RootJsonFormat[CompletedSpan] = jsonFormat12(CompletedSpan)
 
+  // Submit a completed span to the datadog trace API
   def submitSpan(s: CompletedSpan)
     (implicit system: ActorSystem, m: Materializer, ec: ExecutionContext): Unit = {
     // https://docs.datadoghq.com/api/?lang=python#send-traces
@@ -127,13 +174,17 @@ object ZendeskTracing {
       method = HttpMethods.PUT,
       uri = s"http://$apmHost:$apmPort/v0.3/traces",
       entity = entity)
-    println(s"Submitting trace: ${List(List(s)).toJson.prettyPrint}")
+//    println(s"Submitting trace: ${List(List(s)).toJson.prettyPrint}")
     val responseFuture = Http().singleRequest(request)
     responseFuture.onComplete {
       case Success(response) if response.status == StatusCodes.OK =>
+        response.discardEntityBytes()
         println("Successfully submitted a trace")
       case Success(response) =>
         println(s"Failed to submit a trace. Status:${response.status}")
+        response.discardEntityBytes()
+      case Failure(ex) =>
+        println(s"Failed to submit a trace. Exception: $ex")
     }
   }
 }

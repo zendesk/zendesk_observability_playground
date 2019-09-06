@@ -8,12 +8,15 @@ import akka.http.scaladsl.server.{Directive0, Directive1}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Flow
 import akka.NotUsed
-import akka.http.scaladsl.server.Directives.{extractRequest, mapRequest, mapResponse, optionalHeaderValueByName, provide}
+import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.server.RouteResult.Rejected
 import spray.json.{DeserializationException, JsString, JsValue, RootJsonFormat, _}
 
 import scala.concurrent.ExecutionContext
 import scala.util.{Failure, Random, Success}
+import scala.concurrent.Future
+import akka.http.scaladsl.server.RouteResult
+import akka.http.scaladsl.server.RouteResult.Complete
 
 object ZendeskTracing {
   import SnakifiedSprayJsonSupport._
@@ -76,38 +79,21 @@ object ZendeskTracing {
     metrics: Map[String, Float] = Map.empty) {
   }
 
-  // An akka-http Directive to extract the TraceContext from the internal header
-  val optionalTraceContext: Directive1[Option[TraceContext]] = {
-    optionalHeaderValueByName(headerContextName).map {
-      case Some(s) => s.split(':').toList match {
-        case tid :: sid :: Nil =>
-          Some(TraceContext(traceId = BigInt(tid), spanId = BigInt(sid)))
-        case _ =>
-          None
-      }
-      case None => None
-    }
-  }
-
-  def traceRequest
-  (implicit system: ActorSystem, materializer: Materializer, ec: ExecutionContext):
-  Directive0 = {
-    mapRequest { request =>
+  def traceRequest(implicit system: ActorSystem, materializer: Materializer, ec: ExecutionContext): Directive1[Option[StartedSpan]] = {
+    extractRequest.flatMap { request =>
+      println("in extractRequest")
       val trace = extractTraceInfo(request)
-      mapResponse { resp =>
-        trace.foreach { t =>
-          completeSpan(t, request, resp)
+      mapRouteResultWith { case result =>
+        println("in mapResponse")
+        trace match {
+          case Some(t) => completeSpan(t, request, result).map(_ => result)
+          case None => Future.successful(result)
         }
-        resp
-      }
-      if (trace.isDefined) {
-        request.addHeader(RawHeader(headerContextName, s"${trace.get.traceId}:${trace.get.spanId}"))
-      } else {
-        request
+      }.tflatMap { _ =>
+        provide(trace)
       }
     }
   }
-
 
   // Extract trace info from the datadog headers on the incoming request
   def extractTraceInfo(r: HttpRequest): Option[StartedSpan] = {
@@ -132,25 +118,30 @@ object ZendeskTracing {
   val serviceType: Web.type = Web
   val resourceName: String = "ping"
 
-  def completeSpan(started: StartedSpan, req: HttpRequest, resp: HttpResponse)
-    (implicit system: ActorSystem, m: Materializer, ec: ExecutionContext): Unit = {
-    val completed = CompletedSpan(
-      traceId = started.traceId,
-      spanId = started.spanId,
-      name = req.uri.path.toString(),
-      resource = resourceName,
-      service = serviceName,
-      `type` = Some(serviceType),
-      start = started.start,
-      duration = epocNanoseconds - started.start,
-      parentId = Some(started.parentSpanId),
-      meta = Map(
-        "http.status_code" -> resp.status.intValue().toString,
-        "http.method" -> req.method.value,
-        "http.url" -> req.uri.path.toString()
+  def completeSpan(started: StartedSpan, req: HttpRequest, result: RouteResult)
+    (implicit system: ActorSystem, m: Materializer, ec: ExecutionContext): Future[Unit] = {
+    val status = result match {
+      case Complete(resp) => resp.status.intValue().toString
+      case Rejected(_) => "400"
+    }
+    submitSpan(
+      CompletedSpan(
+        traceId = started.traceId,
+        spanId = started.spanId,
+        name = req.uri.path.toString(),
+        resource = resourceName,
+        service = serviceName,
+        `type` = Some(serviceType),
+        start = started.start,
+        duration = epocNanoseconds - started.start,
+        parentId = Some(started.parentSpanId),
+        meta = Map(
+          "http.status_code" -> status,
+          "http.method" -> req.method.value,
+          "http.url" -> req.uri.path.toString()
+        )
       )
     )
-    submitSpan(completed)
   }
 
   def completeFailedSpan(started: StartedSpan, req: HttpRequest, ex: Throwable)
@@ -185,27 +176,28 @@ object ZendeskTracing {
 
   // Submit a completed span to the datadog trace API
   def submitSpan(s: CompletedSpan)
-    (implicit system: ActorSystem, m: Materializer, ec: ExecutionContext): Unit = {
+    (implicit system: ActorSystem, m: Materializer, ec: ExecutionContext): Future[Unit] = {
     // https://docs.datadoghq.com/api/?lang=python#send-traces
     val entity: RequestEntity = HttpEntity(
       ContentTypes.`application/json`,
       List(List(s)).toJson.compactPrint)
     // Super naive implementation, quickly fails when volume is high because it runs out of threads.
     // Should be a stream of traces so they can be bulk-posted.
+    println(s"Submitting trace: ${List(List(s)).toJson.prettyPrint}")
     val request = HttpRequest(
       method = HttpMethods.PUT,
       uri = s"http://$apmHost:$apmPort/v0.3/traces",
       entity = entity)
-//    println(s"Submitting trace: ${List(List(s)).toJson.prettyPrint}")
     val responseFuture = Http().singleRequest(request)
-    responseFuture.onComplete {
-      case Success(response) if response.status == StatusCodes.OK =>
+    responseFuture.map {
+      case response if response.status == StatusCodes.OK =>
         response.discardEntityBytes()
         println("Successfully submitted a trace")
-      case Success(response) =>
-        println(s"Failed to submit a trace. Status:${response.status}")
+      case response =>
         response.discardEntityBytes()
-      case Failure(ex) =>
+        println(s"Failed to submit a trace. Status:${response.status}")
+    }.recover {
+      case ex =>
         println(s"Failed to submit a trace. Exception: $ex")
     }
   }

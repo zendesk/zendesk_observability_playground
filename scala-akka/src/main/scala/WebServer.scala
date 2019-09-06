@@ -10,7 +10,7 @@ import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Sink, Source}
 import spray.json.DefaultJsonProtocol._
 import spray.json.RootJsonFormat
-import ZendeskTracing.{traceRequest, optionalTraceContext}
+import ZendeskTracing.traceRequest
 
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.language.postfixOps
@@ -36,15 +36,15 @@ object WebServer {
     implicit val pingFormat: RootJsonFormat[PingResponse] = jsonFormat1(PingResponse)
 
     // traceRequest adds the internal tracing header, and completes the traces
-    val route = traceRequest(system, materializer, executionContext) {
+    val route = traceRequest.apply { traceContext =>
       // optionalTraceContext extracts the context from the internal header for use in upstream services
-      debugLogger { optionalTraceContext { traceContext =>
+      debugLogger {
         path("scala-akka" / "ping") {
           get {
             complete(PingResponse("pong"))
           }
         }
-      }}
+      }
     }
 
     val bindingFuture = Http().bindAndHandle(route, "0.0.0.0", portNumber)

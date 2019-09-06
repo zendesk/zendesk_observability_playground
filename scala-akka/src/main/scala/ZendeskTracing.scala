@@ -4,11 +4,12 @@ import akka.actor.ActorSystem
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.headers.RawHeader
-import akka.http.scaladsl.server.Directive1
+import akka.http.scaladsl.server.{Directive0, Directive1}
 import akka.stream.Materializer
 import akka.stream.scaladsl.Flow
 import akka.NotUsed
-import akka.http.scaladsl.server.Directives.optionalHeaderValueByName
+import akka.http.scaladsl.server.Directives.{extractRequest, mapRequest, mapResponse, optionalHeaderValueByName, provide}
+import akka.http.scaladsl.server.RouteResult.Rejected
 import spray.json.{DeserializationException, JsString, JsValue, RootJsonFormat, _}
 
 import scala.concurrent.ExecutionContext
@@ -52,6 +53,7 @@ object ZendeskTracing {
   }
 
   // An akka-streams flow to add the internal trace context header
+  // Akka-HTTP does not provide any way to modify the request context,
   private def traceContextHeader(req: HttpRequest): HttpRequest = {
     val traceContext: Option[String] = extractTraceInfo(req)
       .map{ ss => s"${ss.traceId}:${ss.spanId}"}
@@ -75,7 +77,7 @@ object ZendeskTracing {
   }
 
   // An akka-http Directive to extract the TraceContext from the internal header
-  def optionalTraceContext: Directive1[Option[TraceContext]] = {
+  val optionalTraceContext: Directive1[Option[TraceContext]] = {
     optionalHeaderValueByName(headerContextName).map {
       case Some(s) => s.split(':').toList match {
         case tid :: sid :: Nil =>
@@ -86,6 +88,26 @@ object ZendeskTracing {
       case None => None
     }
   }
+
+  def traceRequest
+  (implicit system: ActorSystem, materializer: Materializer, ec: ExecutionContext):
+  Directive0 = {
+    mapRequest { request =>
+      val trace = extractTraceInfo(request)
+      mapResponse { resp =>
+        trace.foreach { t =>
+          completeSpan(t, request, resp)
+        }
+        resp
+      }
+      if (trace.isDefined) {
+        request.addHeader(RawHeader(headerContextName, s"${trace.get.traceId}:${trace.get.spanId}"))
+      } else {
+        request
+      }
+    }
+  }
+
 
   // Extract trace info from the datadog headers on the incoming request
   def extractTraceInfo(r: HttpRequest): Option[StartedSpan] = {
